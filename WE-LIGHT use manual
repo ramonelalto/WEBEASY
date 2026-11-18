@@ -1,0 +1,73 @@
+
+Características Generales del Protocolo
+
+• Protocolo: Modbus RTU (Esclavo).
+• Funciones soportadas:
+	• 0x03 (Read Holding Registers): Lectura de registros (máximo 24 registros por petición).
+	• 0x06 (Write Single Register): Escritura de un único registro (comandos de actuación y parámetros).
+	• 0x15 (Write File Record - propietario): Carga masiva de tablas de direccionamiento/escenas.
+• Direccionamiento Broadcast: Acepta tramas dirigidas a direcciones 240 a 255 (0xF0–0xFF) sin devolver respuesta (ideal para encendido/apagado general de luminarias).
+• Hardware asociado:
+	• Canal 0: Pin PC5 (Relé / Salida 1).
+	• Canal 1: Pin PC4 (Relé / Salida 2).
+
+1. Registros de Actuación y Control en Tiempo Real (Zona 0x2300 / 9000+)
+
+Son registros en RAM (no desgastan la memoria EEPROM) diseñados para operar sobre las salidas mediante la Función 0x06.
+
+Registro Hex (Dec)	Acceso	Función en el WE-LIGHT	Posibilidades de actuación y valores
+0x2328 (9000)	W (Escritura)	Comando de Escena / Maniobra (Canal 0 / General)	Actúa según el modo configurado (0, 1 o 3). Acepta índices de escena/preset (0 a 9) grabados en EEPROM:
+• 0 (0x0000): Apagar (0).
+• 1 (0x0001): Encender / Escena 1 (valor 100).
+• 2 (0x0002): Encendido permanente / Toggle (0xFFFF).
+• 3 (0x0003): Escena 3 (nivel/tiempo 10).
+• 4 (0x0004): Escena 4 (nivel/tiempo 20 + reset de flags).
+• 5 (0x0005): Escena 5 (nivel/tiempo 40).
+• 6 (0x0006): Escena 6 (nivel/tiempo 70).
+• 7 (0x0007): Escena 7 (nivel/tiempo 100).
+• 8 (0x0008): Apagar (0).
+• 9 (0x0009): Temporizado largo (600).
+0x2329 (9001)	W (Escritura)	Comando de Escena / Maniobra (Canal 1)	Misma tabla de escenas/presets (0 a 9) aplicada de forma individual al Canal 1 (PC4).
+0x2332 (9010)	W (Escritura)	Consigna / Nivel directo (Modo 1)	Escribe un valor directo de 16 bits (0 = Apagar, > 0 = Encender/Nivel). Solo actúa si el canal está en Modo 1.
+0x2333 (9011)	W (Escritura)	Consigna / Nivel directo (Modo 3)	Escribe un valor directo de 16 bits (0 = Apagar, 1–100 = Nivel/Tiempo). Habilitado en tu equipo (configurado en Modo 3).
+0x2334 (9012)	R/W	Estado Global del Sistema (DAT_mem_0105)	Permite leer y modificar directamente el byte de estado general en RAM.
+0x2335 (9013)	W (Escritura)	Consigna / Nivel directo (Modo 2)	Escribe un valor directo de 16 bits (0 = Apagar, > 0 = Encender). Solo actúa si el canal está en Modo 2.
+0x2336 (9014)	W (Escritura)	Consigna / Nivel directo (Modo 4)	Escribe un valor directo de 16 bits (0 = Apagar, > 0 = Encender). Solo actúa si el canal está en Modo 4.
+
+
+2. Registros de Estado, Diagnóstico y Mantenimiento (Zona 0x0000 – 0x0036)
+
+Registros mixtos en RAM y EEPROM para consultar el estado de las salidas, diagnóstico del equipo y comandos de sistema.
+
+Registro Hex (Dec)	Acceso	Función en el WE-LIGHT	Detalles y valores
+0x0000 – 0x000E (0–14)	R/W	Variables operativas en RAM / EEPROM	Lectura de parámetros base de EEPROM (0x00–0x1C). En escritura (0x06), actualiza la tabla interna en RAM (0x0287–0x02A3).
+0x000A – 0x0013 (10–19)	R (Lectura)	Tabla de Escenas Canal 0 (EEPROM)	Devuelve los 10 valores de 16 bits configurados para las escenas 0 a 9 del Canal 0 (direcciones EEPROM 0x14–0x27).
+0x0011 (17)	W (Escritura)	Máscara de control de canales / Disparo	Escribe una máscara de 2 bits en RAM (DAT_mem_02a9:02aa) y dispara rutinas de sincronización de EEPROM para Bit 0 (Canal 0) y Bit 1 (Canal 1).
+0x001E (30)	R/W	Configuración / Parámetro Canal 0	Lee/escribe la palabra de configuración del Canal 0 en EEPROM (0x10) y RAM (0x0233:0234).
+0x001F (31)	R/W	Configuración / Parámetro Canal 1	Lee/escribe la palabra de configuración del Canal 1 en EEPROM (0x12) y RAM (0x0250:0251).
+0x001E – 0x0027 (30–39)*	R (Lectura)	Tabla de Escenas Canal 1 (EEPROM)	Devuelve los valores de 16 bits configurados para las escenas 0 a 9 del Canal 1 (direcciones EEPROM 0x3C–0x4F).
+0x0027 (39)	R/W (OTP)	Código de Modelo / Serie	En lectura devuelve identificación. En escritura solo permite grabarse una vez si la EEPROM está virgen (0x00/0xFF), aceptando letras ASCII 'A'–'Z' (en tu equipo: 'I').
+0x0028 (40)	R/W (OTP)	Semana de Fabricación	Solo grabable si EEPROM está virgen. Acepta valores 1 a 53 (en tu equipo: semana 09).
+0x0029 (41)	R/W (OTP)	Número de Serie / Lote	En lectura devuelve lectura interna/sensores. En escritura (si EEPROM virgen) acepta valores 1 a 999.
+0x0032 (50)	R/W	Parámetro de Sistema 1 (EEPROM 0x08)	Configuración general almacenada en EEPROM (0x012C = 300 en tu volcado).
+0x0033 (51)	R/W	Parámetro de Sistema 2 (EEPROM 0x0A)	Configuración general almacenada en EEPROM (0x001E = 30 en tu volcado).
+0x0034 (52)	R/W	Estado Global / Temporizador RAM	En lectura devuelve DAT_mem_0105. En escritura actualiza DAT_mem_010b:010c (si el valor es != 0).
+0x0035 (53)	W (Escritura)	Reinicio por Software (Reset)	Comando de reinicio del microcontrolador. Requiere enviar exactamente el valor mágico 0x3039 (12345 en decimal).
+0x0036 (54)	R/W	Versión / Parámetro Sistema 3	En lectura devuelve constante 0x000C (12). En escritura actualiza dirección EEPROM 0x0C.
+
+*Nota: En la lectura Modbus (0x03), los registros 0 a 99 mapean directamente a la EEPROM (2 bytes por registro).
+
+3. Registros de Configuración de Escenas y Parámetros (Zona 0x0064 – 0x00D9 / 100–217)
+
+• Acceso: R/W (Lectura con 0x03 / Escritura con 0x06).
+• Función: Permiten modificar de forma permanente en EEPROM los tiempos, niveles de regulación, retardos de apagado y enlaces entre canales (como el modo espejo entre PC4 y PC5).
+• Precaución: Al escribir directamente en la EEPROM interna del ATmega8, estos registros no deben usarse para conmutar luces en el día a día (para evitar agotar los 100.000 ciclos de escritura de la memoria); úsalos solo durante la puesta en marcha.
+
+Resumen de Tramas Rápidas (Slave ID 01)
+
+• Encender Canal 0 (Escena 1 -> 100%): 01 06 23 28 00 01 C2 64
+• Apagar Canal 0 (Escena 0 -> 0%): 01 06 23 28 00 00 03 A4
+• Encender Canal 1 (Escena 1 -> 100%): 01 06 23 29 00 01 93 A4
+• Apagar Canal 1 (Escena 0 -> 0%): 01 06 23 29 00 00 52 64
+• Encendido General (Broadcast ID 255): FF 06 23 28 00 01 9C 62
+• Reiniciar el equipo: 01 06 00 35 30 39 4C 17
