@@ -63,11 +63,80 @@ Registro Hex (Dec)	Acceso	Función en el WE-LIGHT	Detalles y valores
 • Función: Permiten modificar de forma permanente en EEPROM los tiempos, niveles de regulación, retardos de apagado y enlaces entre canales (como el modo espejo entre PC4 y PC5).
 • Precaución: Al escribir directamente en la EEPROM interna del ATmega8, estos registros no deben usarse para conmutar luces en el día a día (para evitar agotar los 100.000 ciclos de escritura de la memoria); úsalos solo durante la puesta en marcha.
 
-Resumen de Tramas Rápidas (Slave ID 01)
 
-• Encender Canal 0 (Escena 1 -> 100%): 01 06 23 28 00 01 C2 64
-• Apagar Canal 0 (Escena 0 -> 0%): 01 06 23 28 00 00 03 A4
-• Encender Canal 1 (Escena 1 -> 100%): 01 06 23 29 00 01 93 A4
-• Apagar Canal 1 (Escena 0 -> 0%): 01 06 23 29 00 00 52 64
-• Encendido General (Broadcast ID 255): FF 06 23 28 00 01 9C 62
-• Reiniciar el equipo: 01 06 00 35 30 39 4C 17
+¡Este barrido real de Modbus (0 a 1000) es oro puro! Al cruzarlo con tu volcado de EEPROM (:20000000...), se descubre exactamente cómo el firmware del WEBEASY WE-LIGHT mapea la EEPROM a registros Modbus.
+Resulta que el mapa de registros de lectura (0x03) no es lineal continuo, sino que está dividido en 3 bloques lógicos muy claros:
+
+1. Bloque 1: Registros de Estado e Identificación (0000 – 0054)
+
+Aquí es donde el equipo expone sus variables internas de RAM, identificación de fábrica y parámetros globales:
+• Identificación de Fábrica (EEPROM 0x0000–0x0003):
+	• Registro 0039 (0x27): 73 (0x49 = letra ASCII 'I') -> Byte 0x0000 de EEPROM.
+	• Registro 0040 (0x28): 9 (0x09) -> Byte 0x0001 de EEPROM (Semana 09).
+	• Registro 0041 (0x29): 29 (0x1D) -> Tamaño de estructura / constante de diagnóstico.
+	• (Nota: El número de serie 0x0600 = 1536 en EEPROM 0x0002–0x0003 se lee a través de otro registro alto o comando).
+• Parámetros Globales de Sistema (EEPROM 0x0008–0x000D):
+	• Registro 0050 (0x32): 300 (0x012C = bytes 2C 01 en EEPROM 0x0008–0x0009).
+	• Registro 0051 (0x33): 30 (0x001E = bytes 1E 00 en EEPROM 0x000A–0x000B).
+	• Registro 0054 (0x36): 1 (0x0001 = bytes 01 00 en EEPROM 0x000C–0x000D).
+• Estado en Tiempo Real / RAM (0000 – 0016):
+	• Registros 0000 (204), 0001 (2419), 0002 (3), 0005 (23), 0009 (5), 0012 (100), 0013 (100), 0014 (3), 0015 (22415), 0016 (184): Son lecturas directas de las variables operativas en RAM (estado actual de los canales 0 y 1, contadores internos, niveles activos 100 y modo 3 del equipo).
+
+2. Bloque 2: Configuración del Canal 0 (Registros 0100 – 0117)
+
+¡Aquí está la revelación más importante! Los registros 100 a 117 mapean 1 a 1 (en palabras de 16 bits, 2 bytes por registro) la zona de EEPROM 0x0012 a 0x0035 (el bloque del Canal 0):
+
+Registro Modbus	Dir. EEPROM	Bytes EEPROM (Little Endian)	Valor Leído	Significado en el Canal 0
+0100	0x0012	00 00	0	Parámetro inicial Canal 0.
+0101	0x0014	14 00	20	Tiempo / Parámetro base (0x14 = 20).
+0102	0x0016	00 00	0	Escena / Comando 0 (Apagar = 0).
+0103	0x0018	64 00	99 (100)*	Escena / Comando 1 (Encender = 100%).
+0104	0x001A	FF FF	65535	Escena / Comando 2 (Encendido permanente / Toggle).
+0105	0x001C	0A 00	10	Escena / Comando 3 (Nivel 10).
+0106	0x001E	14 00	20	Escena / Comando 4 (Nivel 20).
+0107	0x0020	28 00	40	Escena / Comando 5 (Nivel 40).
+0108	0x0022	46 00	70	Escena / Comando 6 (Nivel 70).
+0109	0x0024	64 00	98 (100)*	Escena / Comando 7 (Nivel 100%).
+0110	0x0026	00 00	0	Escena / Comando 8 (Apagar = 0).
+0111	0x0028	58 02	600	Escena / Comando 9 (Temporizado 600).
+0112–0116	0x002A–0x0033	00 00	0	Parámetros auxiliares / enlaces de Canal 0.
+0117	0x0034	0A 00	10	Rampa / Tiempo de transición Canal 0 (10).
+
+*Nota: Que 100 (0x64) aparezca como 99 o 98 al leerlo por Modbus confirma que el firmware aplica una pequeña corrección o ajuste dinámico en RAM al cargar el 100%.
+
+3. Zona intermedia (0118 – 0199)
+
+• Registros 0118 a 0199: Todos devuelven el valor constante 2377 (0x0949). Esto es el valor de relleno que devuelve el firmware cuando consultas registros que apuntan a posiciones de EEPROM sin asignar (FF FF en 0x0036–0x0039 o fuera de rango).
+
+4. Bloque 3: Configuración del Canal 1 (Registros 0200 – 0217)
+
+Exactamente simétrico al Bloque 2, los registros 200 a 217 mapean 1 a 1 la zona de EEPROM 0x003A a 0x005D (el bloque del Canal 1):
+
+Registro Modbus	Dir. EEPROM	Bytes EEPROM (Little Endian)	Valor Leído	Significado en el Canal 1
+0200	0x003A	00 00	0	Parámetro inicial Canal 1.
+0201	0x003C	14 00	20	Tiempo / Parámetro base (0x14 = 20).
+0202	0x003E	00 00	0	Escena / Comando 0 (Apagar = 0).
+0203	0x0040	64 00	98 (100)	Escena / Comando 1 (Encender = 100%).
+0204	0x0042	FF FF	65535	Escena / Comando 2 (Encendido permanente / Toggle).
+0205	0x0044	0A 00	10	Escena / Comando 3 (Nivel 10).
+0206	0x0046	14 00	20	Escena / Comando 4 (Nivel 20).
+0207	0x0048	28 00	40	Escena / Comando 5 (Nivel 40).
+0208	0x004A	46 00	70	Escena / Comando 6 (Nivel 70).
+0209	0x004C	64 00	98 (100)	Escena / Comando 7 (Nivel 100%).
+0210	0x004E	00 00	0	Escena / Comando 8 (Apagar = 0).
+0211	0x0050	58 02	600	Escena / Comando 9 (Temporizado 600).
+0212–0216	0x0052–0x005B	00 00	0	Parámetros auxiliares / enlaces de Canal 1.
+0217	0x005C	0A 00	10	Rampa / Tiempo de transición Canal 1 (10).
+
+
+Conclusión clave de este cruce de datos
+
+Fíjate en un detalle importantísimo que corrige la tabla anterior:
+• En ambos canales, el primer parámetro (0101 y 0201) es 20 (0x14), y las escenas 0 a 9 empiezan en 0102–0111 (Canal 0) y 0202–0211 (Canal 1).
+• Por eso, cuando envías un comando por Modbus al registro de actuación 0x2328 (9000) o 0x2329 (9001):
+	• Enviar 0 selecciona 0102 / 0202 (0 -> Apagar).
+	• Enviar 1 selecciona 0103 / 0203 (100 -> Encender al 100%).
+	• Enviar 2 selecciona 0104 / 0204 (65535 -> Encendido permanente / Toggle).
+	• Enviar 3 a 7 selecciona los niveles intermedios (10, 20, 40, 70, 100).
+	• Enviar 9 selecciona el temporizado (600).
+
